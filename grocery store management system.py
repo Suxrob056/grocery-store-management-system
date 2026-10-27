@@ -71,89 +71,147 @@ def mahsulot_qidirish(kalit_soz):
             print(f"{m[0]:<5} {m[1]:<20} {m[2]:<15.2f} {m[3]:<10}")
     print("="*50)
 
-# Chekni rasm ko'rinishida yaratish funksiyasi
-def chek_rasmini_yaratish(nomi, sanash, narxi, total_price, sale_date):
-    width = 300
-    height = 380
+# Ko'plab mahsulotlar uchun umumiy chekni rasm ko'rinishida yaratish
+def kop_mahsulotli_chek_yaratish(savatcha, umumiy_summa, sale_date):
+    # Mahsulotlar soniga qarab rasm balandligini dinamik o'zgartiramiz
+    base_height = 400
+    row_height = 25
+    height = base_height + (len(savatcha) * row_height)
+    width = 380
+    
     image = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(image)
     
-    # Shriftlarni sozlash (Windows uchun Arial, topilmasa standart)
     try:
-        font_title = ImageFont.truetype("arial.ttf", 14)
+        font_title = ImageFont.truetype("arial.ttf", 18)
         font_text = ImageFont.truetype("arial.ttf", 14)
+        font_thanks = ImageFont.truetype("arial.ttf", 12)
     except IOError:
         font_title = ImageFont.load_default()
         font_text = ImageFont.load_default()
         
-    # Matnlarni rasmga chizish
     y = 20
-    draw.text((100, y), "SAVDO CHEKI", fill="black", font=font_title)
+    draw.text((140, y), "SAVDO CHEKI", fill="black", font=font_title)
     y += 35
-    draw.text((20, y), "-" * 48, fill="black", font=font_text)
+    draw.text((20, y), "-" * 52, fill="black", font=font_text)
     y += 20
     draw.text((20, y), "Do'kon: Oziq-ovqat Do'koni", fill="black", font=font_text)
     y += 25
     draw.text((20, y), f"Sana va vaqt: {sale_date}", fill="black", font=font_text)
     y += 25
-    draw.text((20, y), "-" * 48, fill="black", font=font_text)
+    draw.text((20, y), "-" * 52, fill="black", font=font_text)
     y += 25
-    draw.text((20, y), f"Mahsulot: {nomi}", fill="black", font=font_text)
-    y += 25
-    draw.text((20, y), f"Dona narxi: {narxi:,.2f} so'm", fill="black", font=font_text)
-    y += 25
-    draw.text((20, y), f"Miqdori: {sanash} ta", fill="black", font=font_text)
-    y += 25
-    draw.text((20, y), "-" * 48, fill="black", font=font_text)
-    y += 25
-    draw.text((20, y), f"Jami summa: {total_price:,.2f} so'm", fill="black", font=font_title)
-    y += 35
-    draw.text((110, y), "Xaridingiz uchun rahmat!", fill="black", font=font_text)
     
-    # Faylga saqlash
+    # Har bir mahsulotni chekga yozish
+    for item in savatcha:
+        nomi = item['name']
+        sanash = item['quantity']
+        narxi = item['price']
+        item_total = item['total']
+        
+        draw.text((20, y), f"{nomi} x {sanash}", fill="black", font=font_text)
+        draw.text((300, y), f"{item_total:,.2f}", fill="black", font=font_text)
+        y += row_height
+        
+    y += 10
+    draw.text((20, y), "-" * 52, fill="black", font=font_text)
+    y += 25
+    draw.text((20, y), f"Jami summa: {umumiy_summa:,.2f} so'm", fill="black", font=font_title)
+    y += 55
+    draw.text((100, y), "Xaridingiz uchun rahmat!", fill="black", font=font_thanks)
+    
     filename = "savdo_cheki.png"
     image.save(filename)
     print(f"\n🖼️ Chek rasm ko'rinishida saqlandi: '{filename}'")
     
-    # Rasmni avtomatik ochish (Windows uchun)
     try:
         os.startfile(filename)
     except AttributeError:
-        # Mac yoki Linux uchun
         pass
 
-def mahsulot_sotish(mahsulot_id, sanash):
+# Savatcha (Kassa / POS) funksiyasi
+def mahsulot_sotish():
     conn = sqlite3.connect("store.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT name, price, quantity FROM products WHERE id = ?", (mahsulot_id,))
-    product = cursor.fetchone()
-
-    if not product:
-        print("\n❌ Bunday ID ga ega mahsulot topilmadi!")
+    
+    savatcha = []
+    
+    print("\n--- KASSA / SAVATCHA REjIMI ---")
+    print("Xarid qilish uchun mahsulotlarni qo'shing. Tugatish uchun ID o'rniga '0' kiriting.")
+    
+    while True:
+        try:
+            m_id_input = input("\nSotilayotgan mahsulot ID si (tugatish uchun 0): ").strip()
+            if m_id_input == '0':
+                break
+                
+            m_id = int(m_id_input)
+            sanash = int(input("Nechta sotilmoqda: "))
+            
+            if sanash <= 0:
+                print("❌ Miqdor 0 dan katta bo'lishi kerak!")
+                continue
+                
+            # Bazadan mahsulotni tekshirish
+            cursor.execute("SELECT name, price, quantity FROM products WHERE id = ?", (m_id,))
+            product = cursor.fetchone()
+            
+            if not product:
+                print("❌ Bunday ID ga ega mahsulot topilmadi!")
+                continue
+                
+            nomi, narxi, aksiya = product
+            
+            # Savatchadagi allaqachon qo'shilgan miqdorni ham hisobga olamiz
+            allaqachon_tanlangan = sum(item['quantity'] for item in savatcha if item['id'] == m_id)
+            
+            if aksiya < (sanash + allaqachon_tanlangan):
+                print(f"⚠️ Omborda yetarli mahsulot yo'q! Hozirda qoldiq: {aksiya} ta")
+                continue
+                
+            total_price = narxi * sanash
+            
+            # Savatchaga qo'shish
+            savatcha.append({
+                'id': m_id,
+                'name': nomi,
+                'price': narxi,
+                'quantity': sanash,
+                'total': total_price
+            })
+            print(f"✅ Savatchaga qo'shildi: {nomi} ({sanash} ta)")
+            
+        except ValueError:
+            print("❌ Xatolik: Faqat raqam kiriting!")
+            
+    if not savatcha:
+        print("\nSavatcha bo'sh, xarid amalga oshirilmadi.")
         conn.close()
         return
-
-    nomi, narxi, aksiya = product
-    if aksiya < sanash:
-        print(f"\n⚠️ Omborda yetarli mahsulot yo'q! Hozirda bor: {aksiya} ta")
-    else:
-        yangi_aksiya = aksiya - sanash
-        cursor.execute("UPDATE products SET quantity = ? WHERE id = ?", (yangi_aksiya, mahsulot_id))
         
-        total_price = narxi * sanash
-        sale_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Savdoni tarixga yozish
-        cursor.execute("INSERT INTO sales (product_name, quantity, total_price, sale_date) VALUES (?, ?, ?, ?)", 
-                       (nomi, sanash, total_price, sale_date))
+    # Xaridni tasdiqlash va omborni yangilash
+    umumiy_summa = sum(item['total'] for item in savatcha)
+    sale_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    print("\n" + "="*40)
+    print(f"Jami xarid summasi: {umumiy_summa:,.2f} so'm")
+    tasdiq = input("Xaridni tasdiqlaysizmi? (ha/yo'q): ").strip().lower()
+    
+    if tasdiq == 'ha':
+        for item in savatcha:
+            # Ombordan kamaytirish
+            cursor.execute("UPDATE products SET quantity = quantity - ? WHERE id = ?", (item['quantity'], item['id']))
+            # Tarixga yozish
+            cursor.execute("INSERT INTO sales (product_name, quantity, total_price, sale_date) VALUES (?, ?, ?, ?)", 
+                           (item['name'], item['quantity'], item['total'], sale_date))
         conn.commit()
+        print("\n🛒 Savdo muvaffaqiyatli yakunlandi!")
         
-        print(f"\n🛒 Savdo bajarildi!")
-        print(f"Mahsulot: {nomi} | Soni: {sanash} ta | Jami summa: {total_price:.2f} so'm")
+        # Umumiy chek rasmini chiqarish
+        kop_mahsulotli_chek_yaratish(savatcha, umumiy_summa, sale_date)
+    else:
+        print("\nXarid bekor qilindi.")
         
-        # Rasm chekni chaqirish
-        chek_rasmini_yaratish(nomi, sanash, narxi, total_price, sale_date)
-
     conn.close()
 
 def yangilash_zaxirasi(mahsulot_id, yangi_miqdor):
@@ -194,7 +252,7 @@ def savdo_tarixini_korsatish():
         print("Hozircha savdo tarixi mavjud emas.")
     else:
         for s in sales:
-            print(f"{s[0]:<5} {s[1]:<20} {s[2]:<8} {s[3]:<15.2f} {s[4]:<20}") # s[1]:<20 Ikkinchi element (s[1]) chapga tekislangan, kengligi 20 belgi
+            print(f"{s[0]:<5} {s[1]:<20} {s[2]:<8} {s[3]:<15.2f} {s[4]:<20}")
     print("="*70)
 
 def main():
@@ -204,7 +262,7 @@ def main():
         print("\n=== OZIQ-OVQAT DO'KONI BOSHQARUV TIZIMI ===")
         print("1. Mahsulotlar ro'yxatini ko'rish")
         print("2. Yangi mahsulot qo'shish")
-        print("3. Mahsulot sotish (POS)")
+        print("3. Mahsulot sotish (POS - Savatcha)")
         print("4. Ombor qoldig'ini to'ldirish")
         print("5. Mahsulotni qidirish")
         print("6. Mahsulotni tahrirlash")
@@ -225,12 +283,7 @@ def main():
             except ValueError:
                 print("\n❌ Xatolik: Narx va miqdorga faqat raqam kiritishingiz kerak!")
         elif tanlov == '3':
-            try:
-                m_id = int(input("Sotilayotgan mahsulot ID si: "))
-                sanash = int(input("Nechta sotilmoqda: "))
-                mahsulot_sotish(m_id, sanash)
-            except ValueError:
-                print("\n❌ Xatolik: ID va sanashni to'g'ri kiriting!")
+            mahsulot_sotish()
         elif tanlov == '4':
             try:
                 m_id = int(input("Mahsulot ID si: "))
